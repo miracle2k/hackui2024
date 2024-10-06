@@ -1,12 +1,16 @@
+import hashlib
 import itertools
 import json
 import sys
 import os
 import csv
+import time
 from typing import List
 import httpx
 import prettyprinter
+import tqdm
 import typer
+from llama_index.core.schema import ImageNode
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, StorageContext, load_index_from_storage
 from llama_index.core import Document
 from llama_index.core.callbacks import CallbackManager, LlamaDebugHandler
@@ -23,13 +27,18 @@ import os
 from bs4 import BeautifulSoup
 import rich
 from llama_index.postprocessor.cohere_rerank import CohereRerank
+from llama_index.multi_modal_llms.openai import OpenAIMultiModal
+
 
 from hackathon_genart.artblocks import extract_artblocks_bio, fetch_artblocks_collection_data, fetch_artblocks_collection_description, get_artblocks_artist_bio, get_artblocks_artist_index, get_artblocks_script_tags, load_artblocks_data
 from hackathon_genart.lerandom import load_lerandom_data
+from hackathon_genart.minhash import MinHashLSH
 from hackathon_genart.objkt import get_objkt_collections_for_artist_address, get_objkt_tokens_for_artist_address
 
 
 app = typer.Typer()
+
+data_folder = "data"
 
 
 def get_llm(model: str):
@@ -52,13 +61,159 @@ def load_all_artists():
 
 
 @app.command()
+def dedup_objkt_tokens():
+    """Deduplicate objkt tokens using MinHashLSH."""
+    data_folder = "data"
+    tokens_file = os.path.join(data_folder, "objkt_tokens.json")
+
+    # Load existing tokens
+    with open(tokens_file, "r") as f:
+        tokens = json.load(f)
+    
+    print(f"Loaded {len(tokens)} objkt tokens")
+
+    # Initialize MinHashLSH
+    lsh = MinHashLSH(num_hashes=128, bands=8)
+    
+    # Deduplicate tokens
+    unique_tokens = []    
+    for token in tqdm.tqdm(tokens, desc="Processing tokens", unit="token"):
+        if not token['description'] or lsh.has_similar_document(token['description']):
+            continue
+        lsh.add_document(f"{token['token_id']}/{token['fa_contract']}", token['description'])
+        unique_tokens.append(token)
+
+    print(f"Deduplicated to {len(unique_tokens)} unique tokens")
+
+    # Save deduplicated tokens
+    output_file = os.path.join(data_folder, "objkt_tokens_deduped.json")
+    with open(output_file, "w") as f:
+        json.dump(unique_tokens, f, indent=2)
+
+    print(f"Saved deduplicated tokens to {output_file}")
+
+
+@app.command()
+def fetch_images():
+    """Fetch all images from the tokens of artblocks and objekt.
+    """
+    images = []
+
+    # # load all objekt tokens
+    # data_folder = "data"
+    # with open(os.path.join(data_folder, "objkt_tokens_deduped.json"), "r") as f:
+    #     tokens = json.load(f)
+    # print(f"Loading {len(tokens)} objekt tokens")
+    # for token in tokens:        
+    #     images.append(token['thumbnail_uri'])
+
+    # load all artblocks tokens    
+    with open(os.path.join(data_folder, "artblocks_collections.json"), "r") as f:
+        collections = json.load(f)
+    print(f"Loading {len(collections)} artblocks collections")
+    for collection in collections.values():
+        for image in collection["images"]:
+            images.append(image)
+
+    image_dir = os.path.join(data_folder, "images")
+    os.makedirs(image_dir, exist_ok=True)
+    
+    # loop through and download all these images
+    for image in tqdm.tqdm(images):
+        if not image:
+            continue
+        filename = hashlib.md5(image.encode()).hexdigest()
+        file_path = os.path.join(image_dir, filename)
+        if os.path.exists(file_path):
+            continue
+
+        
+        retries = 0
+        max_retries = 3
+        while retries < max_retries:
+            try:
+                content = httpx.get(image, timeout=10).content
+                break
+            except (httpx.RequestError, httpx.HTTPStatusError) as e:
+                retries += 1
+                if retries == max_retries:
+                    print(f"Failed to fetch image after {max_retries} attempts: {image}")
+                    continue
+                time.sleep(1)  # Wait for 1 second before retrying
+        else:
+            continue  # Skip this image if all retries failed
+        
+        # Save the image        
+        file_path = os.path.join(image_dir, filename)
+        with open(file_path, "wb") as f:
+            f.write(content)
+        print(f"Saved image: {file_path}")
+
+
+@app.command()
+def describe_images(model: str = typer.Option("openai", help="Model to use: mistral or openai")):
+    """Describe all images in the data/images directory using an LLM."""
+
+    def persist():
+        os.makedirs(data_folder, exist_ok=True)
+        with open(os.path.join(data_folder, "image_descriptions.json"), "w") as f:
+            json.dump(image_descriptions, f, indent=2)
+
+    openai_mm_llm = OpenAIMultiModal(
+        model="gpt-4o-mini", max_new_tokens=5500
+    )
+
+    image_descriptions = {}
+    image_dir = os.path.join(data_folder, "images")
+
+    if not os.path.exists(image_dir):
+        print(f"Image directory not found at {image_dir}. Please run 'fetch_images' command first.")
+        return
+
+    for filename in tqdm.tqdm(os.listdir(image_dir), desc="Processing images"):        
+        image_path = os.path.join(image_dir, filename)
+
+        image_documents = [ImageNode(image_path=image_path)]
+        
+        response_1 = openai_mm_llm.complete(
+            prompt="""
+Can you please describe the artwork as succinctly as possible by discussing the following:
+- color (dominant colors, palette, contrast)
+- composition (balance, symmetry, focal points, ...)
+- subject matter (abstract, representational, conceptual, ...)
+- artistic style (abstract, surreal, impressionist, pixel art, 3D, glitch, ASCII, ...)
+- recognised objects (what objects can you identify in the piece? look for human faces, bodies, cats, dogs, fruits, ...)
+- orientation (horizontal, vertical, square)
+- form (round, square, flow field, ...)
+- overall feeling, emotional impact
+Your reply has to be a succinct as possible and should only mention specific terms if you are sure they apply to the artwork.
+
+Make sure you quantify your adjectives as much as possible, for example "somewhat vibrant", "very vibrant" etc.
+
+Use a free-flowing text reply, do not use enumeration.
+            """,
+            image_documents=image_documents,
+        )
+        
+        image_descriptions[filename] = response_1.text
+
+        persist()
+
+    # Save the descriptions to a JSON file
+    output_file = os.path.join(data_folder, "image_descriptions.json")
+    with open(output_file, "w") as f:
+        json.dump(image_descriptions, f, indent=2)
+
+    print(f"Saved {len(image_descriptions)} image descriptions to {output_file}")
+
+
+@app.command()
 def fetch_artblocks_collections(model: str = typer.Option("openai", help="Model to use: mistral or openai")):
     """Fetch all artblocks collections.
     """
     llm = get_llm(model)
 
     def persist():
-        data_folder = "data"
         os.makedirs(data_folder, exist_ok=True)
         with open(os.path.join(data_folder, "artblocks_collections.json"), "w") as f:
             json.dump(artblocks_collections, f, indent=2)
@@ -72,12 +227,12 @@ def fetch_artblocks_collections(model: str = typer.Option("openai", help="Model 
         collections = fetch_artblocks_collection_data(offset)
         #print(collections)
         for collection in collections:
-            name, description, creator = fetch_artblocks_collection_description(collection["collectionId"])
+            name, description, creator, images = fetch_artblocks_collection_description(collection["collectionId"])
             artblocks_collections[collection["collectionId"]] = {
                 "name": name,
                 "description": description,
                 "creator": creator,
-                #"artist_addresses": collection["artistAddresses"]
+                "images": images,
             }
 
         if not page_size:
@@ -120,7 +275,6 @@ def index_objkt(model: str = typer.Option("openai", help="Model to use: mistral 
             import time; time.sleep(0.5)
     
     # Save all tokens to a JSON file in the data folder
-    data_folder = "data"
     os.makedirs(data_folder, exist_ok=True)
     tokens_file_path = os.path.join(data_folder, "objkt_tokens.json")
     
@@ -241,7 +395,7 @@ def build_token_index(model: str = typer.Option("openai", help="Model to use: mi
     from tqdm import tqdm
     for token in tqdm(tokens, desc="Processing tokens", unit="token"):
         description = token['description']
-        doc_id = token['token_id']
+        doc_id = token['token_id'] + "/" + token['fa_contract']
         if description:
             if lsh.has_similar_document(description):
                 continue
@@ -264,6 +418,13 @@ def build_token_index(model: str = typer.Option("openai", help="Model to use: mi
     #     pickle.dump(lsh, f)
     # print('LSH index stored successfully')
 
+
+"""
+artist who creates red collections
+
+
+
+"""
 
 
 @app.command()

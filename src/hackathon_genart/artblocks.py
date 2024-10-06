@@ -173,7 +173,7 @@ def fetch_artblocks_collection_data(offset: int = 0):
 
 
 def fetch_artblocks_collection_description(collection_id):
-    url = f"https://api.reservoir.tools/tokens/v7?collection={collection_id}&limit=1"
+    url = f"https://api.reservoir.tools/tokens/v7?collection={collection_id}&limit=2"
     headers = {
         "Accept": "*/*",
         "X-Api-Key": "1ad08f8b-99e2-5317-87d7-e7675997299b"
@@ -184,6 +184,12 @@ def fetch_artblocks_collection_description(collection_id):
             response = client.get(url, headers=headers)
             response.raise_for_status()
             result = response.json()
-            return result["tokens"][0]["token"]["collection"]["name"], result["tokens"][0]["token"]["description"], result["tokens"][0]["token"]["collection"]["creator"]
+            images = [token["token"]["image"] for token in result["tokens"]]
+            return result["tokens"][0]["token"]["collection"]["name"], result["tokens"][0]["token"]["description"], result["tokens"][0]["token"]["collection"]["creator"], images
     except:
         raise
+
+
+
+def fetch_artblocks_collection_images():
+    pass
