@@ -446,7 +446,10 @@ artist who creates red collections
 @app.command()
 def search(query: str, model: str = typer.Option("openai", help="Model to use: mistral or openai"), synthesize: bool = typer.Option(False, help="Use response synthesizer mode"),
            dataset: str = typer.Option(..., help="Dataset to search: artist, collection, or token")):
-    llm = get_llm(model)    
+    llm = get_llm(model)   
+    
+    # Set global handler to simple
+    llama_index.core.set_global_handler("simple")
 
     print(f'loading {dataset} index')
     if dataset == 'artist':
@@ -485,6 +488,23 @@ def search(query: str, model: str = typer.Option("openai", help="Model to use: m
                 SimilarityPostprocessor(similarity_cutoff=0.7),
                 #cohere_rerank
             ],
+        )
+        
+        new_summary_tmpl_str = (
+            "Context information is below.\n"
+            "---------------------\n"
+            "{context_str}\n"
+            "---------------------\n"
+            "Given the context information and not prior knowledge, "
+            "answer the query in the style of a Shakespeare play.\n"
+        "Query: {query_str}\n"
+            "Answer: "
+        )
+        from llama_index.core import PromptTemplate
+
+        new_summary_tmpl = PromptTemplate(new_summary_tmpl_str)
+        query_engine.update_prompts(
+                {"response_synthesizer:text_qa_template": new_summary_tmpl}
         )
 
         print()
