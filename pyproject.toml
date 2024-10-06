@@ -11,6 +11,9 @@ dependencies = [
     "llama-index-llms-mistralai>=0.2.5",
     "llama-index-readers-web>=0.2.3",
     "httpx>=0.27.2",
+    "rich>=13.9.2",
+    "llama-index-postprocessor-cohere-rerank>=0.2.1",
+    "tqdm>=4.66.5",
 ]
 
 [build-system]

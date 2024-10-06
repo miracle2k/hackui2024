@@ -1,8 +1,12 @@
 import json
+import os
 import re
-
+import typer
 from bs4 import BeautifulSoup
+import httpx
 from prettyprinter import pprint
+
+from hackathon_genart.ttypes import ArtistData
 
 
 def extract_artblocks_bio(file_content):
@@ -88,3 +92,98 @@ def get_artblocks_artist_index(text):
               })                            
 
     return artists
+
+
+def load_artblocks_data():
+    with open("data/artist_bios.json", 'r') as file:
+        artist_bios = json.load(file)
+        
+        processed_artblocks_data = []
+        for address, bio in artist_bios.items():
+            processed_artblocks_data.append(ArtistData(
+                name=bio["name"],
+                bio=bio["bio"],
+                addresses=[address]
+            ))
+
+    return processed_artblocks_data
+
+
+def index_artblocks(model: str = typer.Option("openai", help="Model to use: mistral or openai")):
+    http_client = httpx.Client()
+
+    overview_page = "https://www.artblocks.io/curated/artists"
+    response = http_client.get(overview_page)
+    artists = get_artblocks_artist_index(response.text)
+    
+    artist_bios = {}
+
+    def persists():
+        # Store all the artist bios in a file in the data folder
+        data_folder = "data"
+        os.makedirs(data_folder, exist_ok=True)    
+        bio_file_path = os.path.join(data_folder, "artist_bios.json")    
+        print(f"Saving {len(artist_bios)} artist bios to {bio_file_path}")    
+        with open(bio_file_path, "w") as f:
+            json.dump(artist_bios, f, indent=2)    
+
+    for artist in artists:
+        print("indexing artist", artist)
+
+        response = http_client.get(f"https://www.artblocks.io/curated/artists/{artist['slug']}")
+        text = response.text
+
+        bio, addreess = get_artblocks_artist_bio(text)
+        artist_bios[addreess] = {
+            "bio": bio,
+            "slug": artist["slug"],
+            "name": artist["name"]
+        }
+
+        persists()
+
+    print(f"Artist bios saved successfully")
+
+
+def fetch_artblocks_collection_data(offset: int = 0):
+    url = "https://api.reservoir.tools/search/collections/v2"
+    params = {
+        "community": "artblocks",
+        "offset": offset
+    }
+    headers = {
+        "Accept": "*/*",
+        "X-Api-Key": "1ad08f8b-99e2-5317-87d7-e7675997299b"
+    }
+
+    try:
+        with httpx.Client() as client:
+            response = client.get(url, params=params, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+    except httpx.HTTPStatusError as e:
+        print(f"HTTP error occurred: {e}")
+    except httpx.RequestError as e:
+        print(f"An error occurred while requesting: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+    
+    
+    return result["collections"]
+
+
+def fetch_artblocks_collection_description(collection_id):
+    url = f"https://api.reservoir.tools/tokens/v7?collection={collection_id}&limit=1"
+    headers = {
+        "Accept": "*/*",
+        "X-Api-Key": "1ad08f8b-99e2-5317-87d7-e7675997299b"
+    }
+
+    try:
+        with httpx.Client() as client:
+            response = client.get(url, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+            return result["tokens"][0]["token"]["collection"]["name"], result["tokens"][0]["token"]["description"], result["tokens"][0]["token"]["collection"]["creator"]
+    except:
+        raise
