@@ -31,7 +31,7 @@ from llama_index.multi_modal_llms.openai import OpenAIMultiModal
 
 
 from hackathon_genart.artblocks import extract_artblocks_bio, fetch_artblocks_collection_data, fetch_artblocks_collection_description, get_artblocks_artist_bio, get_artblocks_artist_index, get_artblocks_script_tags, load_artblocks_data
-from hackathon_genart.lerandom import load_lerandom_data
+from hackathon_genart.lerandom import load_additional_artist_context, load_lerandom_data
 from hackathon_genart.minhash import MinHashLSH
 from hackathon_genart.objkt import get_objkt_collections_for_artist_address, get_objkt_tokens_for_artist_address
 
@@ -57,7 +57,15 @@ def load_all_artists():
     processed_artblocks_data = load_artblocks_data()
     print(f"artblocks.io: {len(processed_artblocks_data)} artists")
 
-    return list(itertools.chain(processed_lerandom_data, processed_artblocks_data))
+    manual_artists = load_additional_artist_context()
+    print(f"manual: {len(manual_artists)} artists")
+
+    return list(itertools.chain(processed_lerandom_data, processed_artblocks_data, manual_artists))
+
+
+@app.command()
+def foo():
+    prettyprinter.pprint(load_additional_artist_context())
 
 
 @app.command()

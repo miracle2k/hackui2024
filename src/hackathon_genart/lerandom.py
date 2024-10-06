@@ -30,3 +30,43 @@ def load_lerandom_data():
             ))
 
     return processed_lerandom_data
+
+
+def load_additional_artist_context():
+    with open("data/Additional Context - Artists (1).csv", 'r') as file:
+        csv_reader = csv.DictReader(file, delimiter=',')
+        lerandom_data = list(csv_reader)
+
+        processed_lerandom_data = []
+        for item in lerandom_data:
+            processed_item = {
+                **item,
+            }            
+
+            processed_lerandom_data.append(ArtistData(
+                name=item["Artist"], 
+                bio=item["Article Text"],
+                addresses=[processed_item["Artist Address"]]
+            ))
+
+    return processed_lerandom_data
+
+
+def load_additional_collection_context():
+    with open("data/Additional Context - Collections.csv", 'r') as file:
+        csv_reader = csv.DictReader(file)
+        collection_data = list(csv_reader)
+
+        processed_collection_data = []
+        for item in collection_data:
+            processed_item = {
+                "Artist": item["Artist"],
+                "Collection": item["Collection"],
+                "Blockchain": item["Blockchain"],
+                "ArtistAddress": item["Artist Address"],
+                "Description": item["Article Text"],
+                "SourceURL": item["Source URL"]
+            }
+            processed_collection_data.append(processed_item)
+
+    return processed_collection_data
