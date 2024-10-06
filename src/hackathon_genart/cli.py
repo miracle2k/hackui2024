@@ -63,6 +63,25 @@ def load_all_artists():
     return list(itertools.chain(processed_lerandom_data, processed_artblocks_data, manual_artists))
 
 
+def get_collections_by_image_hash():
+    collections_by_hash = {}
+    
+    # Load artblocks collections
+    with open(os.path.join(data_folder, "artblocks_collections.json"), "r") as f:
+        artblocks_collections = json.load(f)
+    
+    print(f"Processing {len(artblocks_collections)} artblocks collections")
+    for collection_id, collection in artblocks_collections.items():
+        for image_url in collection["images"]:
+            if not image_url:
+                continue
+            image_hash = hashlib.md5(image_url.encode()).hexdigest()
+            if image_hash not in collections_by_hash:
+                collections_by_hash[image_hash] = []
+            collections_by_hash[image_hash].append(collection)
+    
+    return collections_by_hash
+
 @app.command()
 def fetch_images():
     """Fetch all images from the tokens of artblocks and objekt.
@@ -349,7 +368,7 @@ def build_token_index(model: str = typer.Option("openai", help="Model to use: mi
     llm = get_llm(model)
     
     data_folder = "data"
-    tokens_file_path = os.path.join(data_folder, "objkt_tokens.json")
+    tokens_file_path = os.path.join(data_folder, "objkt_tokens_deduped.json")
     
     if not os.path.exists(tokens_file_path):
         print(f"Token file not found at {tokens_file_path}. Please run 'index_objkt' command first.")
@@ -360,18 +379,44 @@ def build_token_index(model: str = typer.Option("openai", help="Model to use: mi
 
     print(f"Loading {len(tokens)} tokens")
     
-    lsh = MinHashLSH(num_hashes=128, bands=8)
-    documents = []
-    
-    from tqdm import tqdm
-    for token in tqdm(tokens, desc="Processing tokens", unit="token"):
+    documents = []    
+    for token in tokens:
         description = token['description']
         doc_id = token['token_id'] + "/" + token['fa_contract']
-        if description:
-            if lsh.has_similar_document(description):
-                continue
-            lsh.add_document(doc_id, description)
-        documents.append(Document(text=f"Name: {token['name']}\nDescription: {description}\nToken ID: {doc_id}"))
+        if description:        
+            documents.append(Document(text=f"Name: {token['name']}\nDescription: {description}\nToken ID: {doc_id}"))
+
+
+    ###################
+
+    collections_by_image_hash = get_collections_by_image_hash()
+
+    image_descriptions_path = os.path.join(data_folder, "image_descriptions.json")
+    if not os.path.exists(image_descriptions_path):
+        print(f"Image descriptions file not found at {image_descriptions_path}. Please run 'describe_images' command first.")
+        return
+
+    with open(image_descriptions_path, "r") as f:
+        image_descriptions = json.load(f)
+
+    for image_hash, description in image_descriptions.items():
+        if image_hash in collections_by_image_hash:
+            for collection in collections_by_image_hash[image_hash]:
+                collection_name = collection.get('name', 'Unknown Collection')
+                collection_id = collection.get('id', 'Unknown ID')
+                artist_name = collection.get('artist', {}).get('name', 'Unknown Artist')
+                
+                doc_text = f"Collection: {collection_name}\n"
+                doc_text += f"Artist: {artist_name}\n"
+                doc_text += f"Collection ID: {collection_id}\n"
+                doc_text += f"Image Description: {description}\n"
+                
+                documents.append(Document(text=doc_text))
+
+    print(f"Added {len(image_descriptions)} image descriptions to documents")
+    
+
+    ##################
 
     print(f"Created {len(documents)} unique documents")
 
