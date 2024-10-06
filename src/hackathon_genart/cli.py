@@ -31,7 +31,7 @@ from llama_index.multi_modal_llms.openai import OpenAIMultiModal
 
 
 from hackathon_genart.artblocks import extract_artblocks_bio, fetch_artblocks_collection_data, fetch_artblocks_collection_description, get_artblocks_artist_bio, get_artblocks_artist_index, get_artblocks_script_tags, load_artblocks_data
-from hackathon_genart.lerandom import load_additional_artist_context, load_lerandom_data
+from hackathon_genart.lerandom import load_additional_artist_context, load_additional_collection_context, load_lerandom_data
 from hackathon_genart.minhash import MinHashLSH
 from hackathon_genart.objkt import get_objkt_collections_for_artist_address, get_objkt_tokens_for_artist_address
 
@@ -61,44 +61,6 @@ def load_all_artists():
     print(f"manual: {len(manual_artists)} artists")
 
     return list(itertools.chain(processed_lerandom_data, processed_artblocks_data, manual_artists))
-
-
-@app.command()
-def foo():
-    prettyprinter.pprint(load_additional_artist_context())
-
-
-@app.command()
-def dedup_objkt_tokens():
-    """Deduplicate objkt tokens using MinHashLSH."""
-    data_folder = "data"
-    tokens_file = os.path.join(data_folder, "objkt_tokens.json")
-
-    # Load existing tokens
-    with open(tokens_file, "r") as f:
-        tokens = json.load(f)
-    
-    print(f"Loaded {len(tokens)} objkt tokens")
-
-    # Initialize MinHashLSH
-    lsh = MinHashLSH(num_hashes=128, bands=8)
-    
-    # Deduplicate tokens
-    unique_tokens = []    
-    for token in tqdm.tqdm(tokens, desc="Processing tokens", unit="token"):
-        if not token['description'] or lsh.has_similar_document(token['description']):
-            continue
-        lsh.add_document(f"{token['token_id']}/{token['fa_contract']}", token['description'])
-        unique_tokens.append(token)
-
-    print(f"Deduplicated to {len(unique_tokens)} unique tokens")
-
-    # Save deduplicated tokens
-    output_file = os.path.join(data_folder, "objkt_tokens_deduped.json")
-    with open(output_file, "w") as f:
-        json.dump(unique_tokens, f, indent=2)
-
-    print(f"Saved deduplicated tokens to {output_file}")
 
 
 @app.command()
@@ -367,6 +329,7 @@ def build_collection_index(model: str = typer.Option("openai", help="Model to us
     
     documents = load_objkt_collections()
     documents.extend(load_artblocks_collections())
+    documents.extend(load_additional_collection_context())
 
     debug_handler = LlamaDebugHandler()
     callback_manager = CallbackManager([debug_handler])

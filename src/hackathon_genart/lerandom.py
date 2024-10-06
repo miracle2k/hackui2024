@@ -1,5 +1,5 @@
 import csv
-
+from llama_index.core import Document
 from hackathon_genart.ttypes import ArtistData
 
 
@@ -53,11 +53,12 @@ def load_additional_artist_context():
 
 
 def load_additional_collection_context():
+    documents = []
+
     with open("data/Additional Context - Collections.csv", 'r') as file:
         csv_reader = csv.DictReader(file)
         collection_data = list(csv_reader)
 
-        processed_collection_data = []
         for item in collection_data:
             processed_item = {
                 "Artist": item["Artist"],
@@ -67,6 +68,9 @@ def load_additional_collection_context():
                 "Description": item["Article Text"],
                 "SourceURL": item["Source URL"]
             }
-            processed_collection_data.append(processed_item)
 
-    return processed_collection_data
+            
+            doc_text = f"Name: {processed_item['Collection']}\nArtist: {processed_item['Artist']}\nDescription: {processed_item['Description']}"
+            documents.append(Document(text=doc_text))
+
+    return documents
